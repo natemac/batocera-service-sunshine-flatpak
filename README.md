@@ -61,7 +61,7 @@ https://github.com/natemac/batocera-service-sunshine-flatpak/blob/main/sunshine
 2. Navigate to:
 
    ```
-   \BATOCERA\share\system\services\
+   \\BATOCERA\\share\\system\\services\\
    ```
 3. Copy the `sunshine` service file into this folder.
 4. SSH into Batocera or use XTerm to make the script executable:
@@ -105,11 +105,28 @@ cat /userdata/system/logs/sunshine.log | tail -n 200
 
 ## Uninstall
 
+### From the Services system
+
+Run:
+
 ```bash
 batocera-services stop sunshine
-/userdata/system/services/sunshine uninstall   # removes Sunshine Flatpak
+batocera-services disable sunshine
+```
+
+Then remove the service file:
+
+```bash
 rm -f /userdata/system/services/sunshine
 ```
+
+Finally, uninstall Sunshine itself:
+
+```bash
+flatpak uninstall -y dev.lizardbyte.app.Sunshine
+```
+
+> Note: Running `/userdata/system/services/sunshine uninstall` directly can fail with **Permission denied** if the script doesn’t have the `+x` bit. Use the above commands instead to fully remove Sunshine and the service script.
 
 ---
 
