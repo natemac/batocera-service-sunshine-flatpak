@@ -16,7 +16,6 @@ https://github.com/natemac/batocera-service-sunshine-flatpak/blob/main/sunshine
 2. Download the service to the services folder:
 
    ```bash
-   mkdir -p /userdata/system/services
    curl -fsSL https://raw.githubusercontent.com/natemac/batocera-service-sunshine-flatpak/main/sunshine -o /userdata/system/services/sunshine
    ```
 3. Enable it in Batocera:
