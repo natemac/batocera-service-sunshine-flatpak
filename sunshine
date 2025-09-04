@@ -1,0 +1,111 @@
+#!/bin/bash
+# /userdata/system/services/sunshine
+# Batocera service: installs/updates Sunshine (Flatpak) and runs it in background
+# - Drop this file into /userdata/system/services/ and chmod +x it
+# - Then enable via Batocera menu: Main Menu → System Settings → Services → Sunshine → Enabled
+#
+# Behavior:
+#   * Ensures Flatpak is available
+#   * Ensures Flathub remote exists
+#   * Installs Sunshine if missing and updates it on each start
+#   * Launches Sunshine and writes logs to /userdata/system/logs/sunshine.log
+#   * Uses the correct PulseAudio socket on Batocera
+
+set -euo pipefail
+
+SERVICE_NAME="sunshine"
+APP_ID="dev.lizardbyte.app.Sunshine"
+LOGDIR="/userdata/system/logs"
+LOGFILE="${LOGDIR}/${SERVICE_NAME}.log"
+PIDFILE="/var/run/${SERVICE_NAME}.pid"
+
+mkdir -p "$LOGDIR"
+
+log(){ echo "$(date '+%F %T') | $*"; }
+
+need_cmd(){ command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not found."; exit 1; }; }
+
+ensure_flatpak(){
+  need_cmd flatpak
+  # Make sure Flathub exists
+  flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1 || true
+}
+
+ensure_sunshine(){
+  # Install if missing (non-interactive)
+  if ! flatpak info "$APP_ID" >/dev/null 2>&1; then
+    log "Installing $APP_ID from Flathub..."
+    flatpak install -y --noninteractive flathub "$APP_ID" >>"$LOGFILE" 2>&1 || { echo "Install failed"; exit 1; }
+  else
+    log "Sunshine already installed; checking for updates..."
+  fi
+  # Update to latest if available
+  flatpak update -y --noninteractive "$APP_ID" >>"$LOGFILE" 2>&1 || true
+}
+
+start_service(){
+  exec >>"$LOGFILE" 2>&1
+  log "start service ${SERVICE_NAME}"
+
+  ensure_flatpak
+  ensure_sunshine
+
+  # --- Audio auto-detect ---
+# Point Sunshine to Batocera's PulseAudio server and pick the best sink
+export PULSE_SERVER=unix:/run/pulse/native
+
+# Prefer the RUNNING sink (active HDMI, etc.), else fall back to default
+RUNNING_SINK="$(pactl list short sinks 2>/dev/null | awk '$6=="RUNNING"{print $2; exit}')"
+DEFAULT_SINK="$(pactl info 2>/dev/null | awk -F': ' '/^Default Sink/{print $2}')"
+
+if [ -n "$RUNNING_SINK" ]; then
+  export PULSE_SINK="$RUNNING_SINK"
+elif [ -n "$DEFAULT_SINK" ]; then
+  export PULSE_SINK="$DEFAULT_SINK"
+fi
+
+log "Using Pulse sink: ${PULSE_SINK:-<none>}"
+# --- end audio auto-detect ---
+
+nohup flatpak run "$APP_ID" >/dev/null 2>&1 &
+  echo $! >"$PIDFILE"
+  log "launched Sunshine (pid $(cat "$PIDFILE"))"
+}
+
+stop_service(){
+  exec >>"$LOGFILE" 2>&1
+  log "stop service ${SERVICE_NAME}"
+  if [ -f "$PIDFILE" ]; then
+    kill "$(cat "$PIDFILE")" 2>/dev/null || true
+    rm -f "$PIDFILE"
+  fi
+  # Fallback: kill any leftover flatpak process
+  pkill -f "flatpak run ${APP_ID}" 2>/dev/null || true
+}
+
+status_service(){
+  if pgrep -f "flatpak run ${APP_ID}" >/dev/null; then
+    echo "sunshine: running"
+  else
+    echo "sunshine: stopped"
+  fi
+}
+
+case "${1-}" in
+  start)   start_service ;;
+  stop)    stop_service ;;
+  restart) stop_service; sleep 1; start_service ;;
+  status)  status_service ;;
+  uninstall)
+    stop_service
+    log "Uninstalling Sunshine Flatpak..."
+    flatpak uninstall -y --noninteractive "$APP_ID" >>"$LOGFILE" 2>&1 || true
+    echo "Uninstalled Sunshine. You can remove this service script if desired."
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|status|uninstall}"
+    exit 1
+    ;;
+esac
+
+exit 0
