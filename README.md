@@ -54,6 +54,31 @@ On next start, Sunshine will behave like a fresh install and ask you to set a ne
 
 ---
 
+## Features
+
+- 📦 **Auto-install & update**  
+  Installs Sunshine via Flatpak on first run and updates it automatically each time the service starts.
+
+- 🖥️ **System-scope install**  
+  Ensures Sunshine is installed in the system scope to avoid duplicate installs and prompts.
+
+- 🔊 **Automatic audio sink detection**  
+  Detects the active PulseAudio sink (prefers the one in `RUNNING` state, else defaults) and streams with it.
+
+- ⚙️ **Simple service integration**  
+  Just drop the script into `/userdata/system/services/` and enable it in Batocera’s Services menu.
+
+- 📑 **Logging**  
+  Outputs all logs to `/userdata/system/logs/sunshine.log` for easy troubleshooting.
+
+- 🔐 **Clean uninstall**  
+  Removes Sunshine and its config directory so you can start fresh with a new setup if needed.
+
+- 🚀 **Headless launch**  
+  Runs Sunshine silently in the background without needing to open a terminal.
+
+---
+
 ## Notes
 
 * Bug: You may need to set the option in your Moonlight or equivalient App to play audio through PC to have the audio play on your device.
