@@ -10,6 +10,10 @@ https://github.com/natemac/batocera-service-sunshine-flatpak/blob/main/sunshine
 
 ---
 
+Original Idea came from: https://github.com/n2qz/batocera-service-sunshine
+
+---
+
 ## Install
 
 1. **Option A:** Download the sunshine service and place the file in the /share/system/services/ folder.
