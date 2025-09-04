@@ -10,7 +10,7 @@ https://github.com/natemac/batocera-service-sunshine-flatpak/blob/main/sunshine
 
 ---
 
-Original Idea came from: https://github.com/n2qz/batocera-service-sunshine
+Original Idea and Service Code came from: https://github.com/n2qz/batocera-service-sunshine
 
 ---
 
