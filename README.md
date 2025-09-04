@@ -12,7 +12,8 @@ https://github.com/natemac/batocera-service-sunshine-flatpak/blob/main/sunshine
 
 ## Install
 
-1. SSH into Batocera (`root` user).
+1a. Download the sunshine service and place the file in the /share/system/services/ folder. (Skip to Step 3)
+1b. SSH into Batocera (`root` user).
 2. Download the service to the services folder:
 
    ```bash
@@ -55,5 +56,6 @@ On next start, Sunshine will behave like a fresh install and ask you to set a ne
 
 ## Notes
 
+* Bug: You may need to set the option in your Moonlight or equivalient App to play audio through PC to have the audio play on your device.
 * Audio sink is detected automatically. If you switch HDMI ports, restart the service.
 * Logs are stored at `/userdata/system/logs/sunshine.log`.
