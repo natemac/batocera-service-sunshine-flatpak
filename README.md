@@ -12,8 +12,11 @@ https://github.com/natemac/batocera-service-sunshine-flatpak/blob/main/sunshine
 
 ## Install
 
-1a. Download the sunshine service and place the file in the /share/system/services/ folder. (Skip to Step 3)
-1b. SSH into Batocera (`root` user).
+1. **Option A:** Download the sunshine service and place the file in the /share/system/services/ folder.
+
+*(then skip to Step 3)*
+
+**Option B:** SSH into Batocera (`root` user).
 2. Download the service to the services folder:
 
    ```bash
