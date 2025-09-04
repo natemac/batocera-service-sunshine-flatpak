@@ -1,15 +1,12 @@
 #!/bin/bash
 # /userdata/system/services/sunshine
-# Batocera service: installs/updates Sunshine (Flatpak) and runs it in background
-# - Drop this file into /userdata/system/services/ and chmod +x it
-# - Then enable via Batocera menu: Main Menu → System Settings → Services → Sunshine → Enabled
-#
-# Behavior:
-#   * Ensures Flatpak is available
-#   * Ensures Flathub remote exists
-#   * Installs Sunshine if missing and updates it on each start
-#   * Launches Sunshine and writes logs to /userdata/system/logs/sunshine.log
-#   * Uses the correct PulseAudio socket on Batocera
+# v2 — System-scoped Flatpak install to avoid multi-install prompts
+# - Auto-adds Flathub (system)
+# - Installs/updates Sunshine (system scope)
+# - Removes any user-scope install to prevent prompts
+# - Auto-detects Pulse sink (RUNNING > default) and exports PULSE_SINK
+# - Logs to /userdata/system/logs/sunshine.log
+# - Starts Sunshine headless and writes a PID file
 
 set -euo pipefail
 
@@ -20,27 +17,48 @@ LOGFILE="${LOGDIR}/${SERVICE_NAME}.log"
 PIDFILE="/var/run/${SERVICE_NAME}.pid"
 
 mkdir -p "$LOGDIR"
-
 log(){ echo "$(date '+%F %T') | $*"; }
-
-need_cmd(){ command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not found."; exit 1; }; }
+need_cmd(){ command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not found"; exit 1; }; }
 
 ensure_flatpak(){
   need_cmd flatpak
-  # Make sure Flathub exists
-  flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1 || true
+  # Ensure Flathub in *system* scope to avoid interactive prompt
+  flatpak --system remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo \
+    >>"$LOGFILE" 2>&1 || true
 }
 
 ensure_sunshine(){
-  # Install if missing (non-interactive)
-  if ! flatpak info "$APP_ID" >/dev/null 2>&1; then
-    log "Installing $APP_ID from Flathub..."
-    flatpak install -y --noninteractive flathub "$APP_ID" >>"$LOGFILE" 2>&1 || { echo "Install failed"; exit 1; }
-  else
-    log "Sunshine already installed; checking for updates..."
+  # If a user-scope install exists, remove it so we can standardize on system scope
+  if flatpak --user info "$APP_ID" >/dev/null 2>&1; then
+    log "Found $APP_ID in user scope; removing to prefer system scope..."
+    flatpak --user uninstall -y --noninteractive "$APP_ID" >>"$LOGFILE" 2>&1 || true
   fi
-  # Update to latest if available
-  flatpak update -y --noninteractive "$APP_ID" >>"$LOGFILE" 2>&1 || true
+
+  # Install system-scope if missing
+  if ! flatpak --system info "$APP_ID" >/dev/null 2>&1; then
+    log "Installing $APP_ID (system scope) from Flathub..."
+    flatpak --system install -y --noninteractive flathub "$APP_ID" >>"$LOGFILE" 2>&1 || {
+      echo "Install failed"; exit 1; }
+  else
+    log "Sunshine already installed (system scope); checking for updates..."
+  fi
+
+  # Update if available (non-interactive)
+  flatpak --system update -y --noninteractive "$APP_ID" >>"$LOGFILE" 2>&1 || true
+}
+
+pick_audio_sink(){
+  export PULSE_SERVER=unix:/run/pulse/native
+  # Prefer a RUNNING sink; else fall back to Pulse default
+  local running default
+  running=$(pactl list short sinks 2>/dev/null | awk '$6=="RUNNING"{print $2; exit}')
+  default=$(pactl info 2>/dev/null | awk -F': ' '/^Default Sink/{print $2}')
+  if [ -n "${running:-}" ]; then
+    export PULSE_SINK="$running"
+  elif [ -n "${default:-}" ]; then
+    export PULSE_SINK="$default"
+  fi
+  log "Using Pulse sink: ${PULSE_SINK:-<none>}"
 }
 
 start_service(){
@@ -49,25 +67,16 @@ start_service(){
 
   ensure_flatpak
   ensure_sunshine
+  pick_audio_sink
 
-  # --- Audio auto-detect ---
-# Point Sunshine to Batocera's PulseAudio server and pick the best sink
-export PULSE_SERVER=unix:/run/pulse/native
+  # Avoid duplicate runs
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+    log "Sunshine already running (pid $(cat "$PIDFILE"))"
+    return 0
+  fi
 
-# Prefer the RUNNING sink (active HDMI, etc.), else fall back to default
-RUNNING_SINK="$(pactl list short sinks 2>/dev/null | awk '$6=="RUNNING"{print $2; exit}')"
-DEFAULT_SINK="$(pactl info 2>/dev/null | awk -F': ' '/^Default Sink/{print $2}')"
-
-if [ -n "$RUNNING_SINK" ]; then
-  export PULSE_SINK="$RUNNING_SINK"
-elif [ -n "$DEFAULT_SINK" ]; then
-  export PULSE_SINK="$DEFAULT_SINK"
-fi
-
-log "Using Pulse sink: ${PULSE_SINK:-<none>}"
-# --- end audio auto-detect ---
-
-nohup flatpak run "$APP_ID" >/dev/null 2>&1 &
+  # Launch Sunshine (system scope)
+  nohup flatpak --system run "$APP_ID" >/dev/null 2>&1 &
   echo $! >"$PIDFILE"
   log "launched Sunshine (pid $(cat "$PIDFILE"))"
 }
@@ -79,16 +88,26 @@ stop_service(){
     kill "$(cat "$PIDFILE")" 2>/dev/null || true
     rm -f "$PIDFILE"
   fi
-  # Fallback: kill any leftover flatpak process
-  pkill -f "flatpak run ${APP_ID}" 2>/dev/null || true
+  # Fallback: kill any leftover instance
+  pkill -f "flatpak --system run ${APP_ID}" 2>/dev/null || true
 }
 
 status_service(){
-  if pgrep -f "flatpak run ${APP_ID}" >/dev/null; then
+  if pgrep -f "flatpak --system run ${APP_ID}" >/dev/null; then
     echo "sunshine: running"
   else
     echo "sunshine: stopped"
   fi
+}
+
+uninstall_service(){
+  exec >>"$LOGFILE" 2>&1
+  log "uninstall ${SERVICE_NAME}"
+  stop_service
+  # Remove system-scope app; also try user scope just in case
+  flatpak --system uninstall -y --noninteractive "$APP_ID" >>"$LOGFILE" 2>&1 || true
+  flatpak --user uninstall -y --noninteractive "$APP_ID" >>"$LOGFILE" 2>&1 || true
+  echo "Sunshine Flatpak uninstalled. You may now remove this service file."
 }
 
 case "${1-}" in
@@ -96,12 +115,7 @@ case "${1-}" in
   stop)    stop_service ;;
   restart) stop_service; sleep 1; start_service ;;
   status)  status_service ;;
-  uninstall)
-    stop_service
-    log "Uninstalling Sunshine Flatpak..."
-    flatpak uninstall -y --noninteractive "$APP_ID" >>"$LOGFILE" 2>&1 || true
-    echo "Uninstalled Sunshine. You can remove this service script if desired."
-    ;;
+  uninstall) uninstall_service ;;
   *)
     echo "Usage: $0 {start|stop|restart|status|uninstall}"
     exit 1
