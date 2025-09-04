@@ -22,7 +22,9 @@ https://github.com/natemac/batocera-service-sunshine-flatpak/blob/main/sunshine
 
 ---
 
-## Quick start (SSH)
+## Installation Methods
+
+### Option 1: SSH Install
 
 1. **SSH into Batocera** (user: `root`).
 2. **Download the service** to the services folder and make it executable:
@@ -39,26 +41,40 @@ https://github.com/natemac/batocera-service-sunshine-flatpak/blob/main/sunshine
    batocera-services status sunshine
    tail -n 100 /userdata/system/logs/sunshine.log
    ```
-
-   On first run, it will install Sunshine via Flatpak. Watch the log for progress.
 4. **Enable autostart** in Batocera:
 
    * EmulationStation → **Main Menu → System Settings → Services → Sunshine → Enabled**
 
 ---
 
-## Quick start (XTerm on Batocera)
+### Option 2: XTerm on Batocera
 
 1. Press **F1** to open the file manager, then **Applications → XTerm**.
-2. Run the same commands:
+2. Run the same commands as above to download and chmod the service script.
+3. Enable it in **Services** so it runs at boot.
+
+---
+
+### Option 3: SMB File Transfer
+
+1. From another computer on the same network, open the Batocera SMB share (usually `\\BATOCERA\` on Windows or `smb://batocera/` on Linux/Mac).
+2. Navigate to:
+
+   ```
+   \BATOCERA\share\system\services\
+   ```
+3. Copy the `sunshine` service file into this folder.
+4. SSH into Batocera or use XTerm to make the script executable:
 
    ```bash
-   mkdir -p /userdata/system/services
-   curl -fsSL https://raw.githubusercontent.com/natemac/batocera-service-sunshine-flatpak/main/sunshine -o /userdata/system/services/sunshine
    chmod +x /userdata/system/services/sunshine
+   ```
+5. Restart the service:
+
+   ```bash
    batocera-services restart sunshine
    ```
-3. Enable it in **Services** so it runs at boot.
+6. Enable autostart in Batocera’s Services menu.
 
 ---
 
@@ -72,24 +88,8 @@ https://github.com/natemac/batocera-service-sunshine-flatpak/blob/main/sunshine
 
    (Accept the self‑signed cert the first time.)
 2. Set a username/password if prompted.
-3. In **Audio/Video**, make sure **Audio Sink** is empty (default) so the service’s `PULSE_SINK` takes effect. (It auto‑selects the `RUNNING` sink.)
+3. In **Audio/Video**, leave **Audio Sink** empty (default) so the service’s `PULSE_SINK` takes effect.
 4. On your TV/phone, open **Moonlight**, select the host, enter the PIN in Sunshine’s UI.
-
-## Audio notes
-
-* The service sets `PULSE_SERVER=unix:/run/pulse/native`.
-* It will select a sink automatically; to verify on Batocera:
-
-  ```bash
-  pactl list short sinks
-  pactl info | grep 'Default Sink'
-  ```
-* You’ll see the chosen device in the log:
-
-  ```
-  Using Pulse sink: alsa_output.pci-0000_04_00.1.HiFi__HDMI2__sink
-  ```
-* If you ever move HDMI ports, just restart the service and it will re‑detect.
 
 ---
 
@@ -110,8 +110,6 @@ batocera-services stop sunshine
 /userdata/system/services/sunshine uninstall   # removes Sunshine Flatpak
 rm -f /userdata/system/services/sunshine
 ```
-
-(You can also remove Sunshine from Flatpak manually.)
 
 ---
 
