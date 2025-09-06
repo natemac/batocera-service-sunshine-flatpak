@@ -73,38 +73,102 @@ start_service(){
   ensure_sunshine
   pick_audio_sink
 
-  # Authoritative check: if Sunshine is already running in Flatpak, don't start another
+  # More comprehensive check: look for any running sunshine processes
+  local running_pids
+  running_pids=$(pgrep -f "sunshine" 2>/dev/null || true)
+  if [ -n "$running_pids" ]; then
+    log "Sunshine processes already running (PIDs: $running_pids). Skipping start."
+    return 0
+  fi
+
+  # Also check flatpak ps as additional verification
   if flatpak --system ps | awk '{print $2}' | grep -qx "$APP_ID"; then
     log "Sunshine already running (flatpak ps). Skipping start."
     return 0
   fi
 
-  # Launch Sunshine headless (system scope)
+  # Launch Sunshine headless (system scope) and wait a moment to ensure it starts
   nohup flatpak --system run "$APP_ID" >/dev/null 2>&1 &
-  echo $! >"$PIDFILE"
-  log "launched Sunshine (pid $(cat "$PIDFILE"))"
+  local launch_pid=$!
+  echo $launch_pid >"$PIDFILE"
+  
+  # Wait a moment for the flatpak process to actually start
+  sleep 2
+  
+  # Verify the process actually started and get the real PID
+  local actual_pids
+  actual_pids=$(pgrep -f "sunshine" 2>/dev/null || true)
+  if [ -n "$actual_pids" ]; then
+    log "launched Sunshine successfully (PIDs: $actual_pids)"
+  else
+    log "WARNING: Sunshine launch may have failed - no processes found"
+  fi
 }
 
 stop_service(){
   exec >>"$LOGFILE" 2>&1
   log "stop service ${SERVICE_NAME}"
 
-  # Ask Flatpak to terminate the sandboxed app cleanly
+  # First, try to stop via flatpak kill (clean termination)
   flatpak --system kill "$APP_ID" 2>/dev/null || true
+  
+  # Wait a moment for clean termination
+  sleep 2
 
-  # Hard fallback: kill any remaining PIDs associated with the app
-  PIDS="$(flatpak --system ps | awk '$2=="'"$APP_ID"'"{print $1}')"
-  if [ -n "${PIDS:-}" ]; then
-    log "Force-killing remaining Sunshine PIDs: $PIDS"
-    kill -9 $PIDS 2>/dev/null || true
+  # Find all sunshine-related processes (including flatpak-bwrap)
+  local all_pids
+  all_pids=$(pgrep -f "sunshine" 2>/dev/null || true)
+  
+  if [ -n "$all_pids" ]; then
+    log "Found remaining Sunshine processes (PIDs: $all_pids), force-killing..."
+    
+    # Try SIGTERM first
+    kill $all_pids 2>/dev/null || true
+    sleep 1
+    
+    # Check if processes are still running and force-kill if needed
+    local remaining_pids
+    remaining_pids=$(pgrep -f "sunshine" 2>/dev/null || true)
+    if [ -n "$remaining_pids" ]; then
+      log "Force-killing stubborn processes (PIDs: $remaining_pids)"
+      kill -9 $remaining_pids 2>/dev/null || true
+    fi
+  fi
+
+  # Also check flatpak ps and kill any remaining flatpak processes
+  local flatpak_pids
+  flatpak_pids="$(flatpak --system ps | awk '$2=="'"$APP_ID"'"{print $1}')"
+  if [ -n "${flatpak_pids:-}" ]; then
+    log "Force-killing remaining Flatpak PIDs: $flatpak_pids"
+    kill -9 $flatpak_pids 2>/dev/null || true
+  fi
+
+  # Final verification
+  sleep 1
+  local final_check
+  final_check=$(pgrep -f "sunshine" 2>/dev/null || true)
+  if [ -n "$final_check" ]; then
+    log "WARNING: Some Sunshine processes may still be running (PIDs: $final_check)"
+  else
+    log "All Sunshine processes stopped successfully"
   fi
 
   rm -f "$PIDFILE"
 }
 
 status_service(){
-  if flatpak --system ps | awk '{print $2}' | grep -qx "$APP_ID"; then
-    echo "sunshine: running"
+  local flatpak_running pgrep_running
+  
+  # Check flatpak processes
+  flatpak_running=$(flatpak --system ps | awk '{print $2}' | grep -qx "$APP_ID" && echo "yes" || echo "no")
+  
+  # Check for any sunshine processes via pgrep
+  pgrep_running=$(pgrep -f "sunshine" >/dev/null 2>&1 && echo "yes" || echo "no")
+  
+  if [ "$flatpak_running" = "yes" ] || [ "$pgrep_running" = "yes" ]; then
+    local pids
+    pids=$(pgrep -f "sunshine" 2>/dev/null || echo "unknown")
+    echo "sunshine: running (PIDs: $pids)"
   else
     echo "sunshine: stopped"
   fi
