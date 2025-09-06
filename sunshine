@@ -1,41 +1,40 @@
 #!/bin/bash
 # /userdata/system/services/sunshine
-# Sunshine (Flatpak) service for Batocera
-# - System-scope install/update (Flathub)
-# - Prevents double-launches (checks flatpak ps)
-# - Proper stop via flatpak kill + hard fallback
-# - Auto-detects Pulse sink (RUNNING > default)
+# v2 — System-scoped Flatpak install to avoid multi-install prompts
+# - Auto-adds Flathub (system)
+# - Installs/updates Sunshine (system scope)
+# - Removes any user-scope install to prevent prompts
+# - Auto-detects Pulse sink (RUNNING > default) and exports PULSE_SINK
 # - Logs to /userdata/system/logs/sunshine.log
+# - Starts Sunshine headless and writes a PID file
 
 set -euo pipefail
 
 SERVICE_NAME="sunshine"
 APP_ID="dev.lizardbyte.app.Sunshine"
-
 LOGDIR="/userdata/system/logs"
 LOGFILE="${LOGDIR}/${SERVICE_NAME}.log"
 PIDFILE="/var/run/${SERVICE_NAME}.pid"
 
 mkdir -p "$LOGDIR"
-
 log(){ echo "$(date '+%F %T') | $*"; }
 need_cmd(){ command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not found"; exit 1; }; }
 
 ensure_flatpak(){
   need_cmd flatpak
-  # Ensure Flathub exists in system scope (avoid prompts)
+  # Ensure Flathub in *system* scope to avoid interactive prompt
   flatpak --system remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo \
     >>"$LOGFILE" 2>&1 || true
 }
 
 ensure_sunshine(){
-  # Remove any user-scope install to avoid multi-install prompts
+  # If a user-scope install exists, remove it so we can standardize on system scope
   if flatpak --user info "$APP_ID" >/dev/null 2>&1; then
     log "Found $APP_ID in user scope; removing to prefer system scope..."
     flatpak --user uninstall -y --noninteractive "$APP_ID" >>"$LOGFILE" 2>&1 || true
   fi
 
-  # Install to system scope if missing
+  # Install system-scope if missing
   if ! flatpak --system info "$APP_ID" >/dev/null 2>&1; then
     log "Installing $APP_ID (system scope) from Flathub..."
     flatpak --system install -y --noninteractive flathub "$APP_ID" >>"$LOGFILE" 2>&1 || {
@@ -49,14 +48,11 @@ ensure_sunshine(){
 }
 
 pick_audio_sink(){
-  # Batocera’s PulseAudio server
   export PULSE_SERVER=unix:/run/pulse/native
-
-  # Prefer a RUNNING sink; else default
+  # Prefer a RUNNING sink; else fall back to Pulse default
   local running default
   running=$(pactl list short sinks 2>/dev/null | awk '$6=="RUNNING"{print $2; exit}')
   default=$(pactl info 2>/dev/null | awk -F': ' '/^Default Sink/{print $2}')
-
   if [ -n "${running:-}" ]; then
     export PULSE_SINK="$running"
   elif [ -n "${default:-}" ]; then
@@ -73,96 +69,32 @@ start_service(){
   ensure_sunshine
   pick_audio_sink
 
-  # More comprehensive check: look for any running sunshine processes
-  local running_pids
-  running_pids=$(pgrep -f "sunshine" 2>/dev/null || true)
-  if [ -n "$running_pids" ]; then
-    log "Sunshine processes already running (PIDs: $running_pids). Skipping start."
+  # Avoid duplicate runs
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+    log "Sunshine already running (pid $(cat "$PIDFILE"))"
     return 0
   fi
 
-  # Also check flatpak ps as additional verification
-  if flatpak --system ps | awk '{print $2}' | grep -qx "$APP_ID"; then
-    log "Sunshine already running (flatpak ps). Skipping start."
-    return 0
-  fi
-
-  # Launch Sunshine headless (system scope) and wait a moment to ensure it starts
+  # Launch Sunshine (system scope)
   nohup flatpak --system run "$APP_ID" >/dev/null 2>&1 &
-  local launch_pid=$!
-  echo $launch_pid >"$PIDFILE"
-  
-  # Wait a moment for the flatpak process to actually start
-  sleep 2
-  
-  # Verify the process actually started and get the real PID
-  local actual_pids
-  actual_pids=$(pgrep -f "sunshine" 2>/dev/null || true)
-  if [ -n "$actual_pids" ]; then
-    log "launched Sunshine successfully (PIDs: $actual_pids)"
-  else
-    log "WARNING: Sunshine launch may have failed - no processes found"
-  fi
+  echo $! >"$PIDFILE"
+  log "launched Sunshine (pid $(cat "$PIDFILE"))"
 }
 
 stop_service(){
   exec >>"$LOGFILE" 2>&1
   log "stop service ${SERVICE_NAME}"
-
-  # First, try to stop via flatpak kill (clean termination)
-  flatpak --system kill "$APP_ID" 2>/dev/null || true
-  
-  # Wait a moment for clean termination
-  sleep 2
-
-  # Find all sunshine-related processes (including flatpak-bwrap)
-  local all_pids
-  all_pids=$(pgrep -f "sunshine" 2>/dev/null || true)
-  
-  if [ -n "$all_pids" ]; then
-    log "Found remaining Sunshine processes (PIDs: $all_pids), force-killing..."
-    
-    # Try SIGTERM first
-    kill $all_pids 2>/dev/null || true
-    sleep 1
-    
-    # Check if processes are still running and force-kill if needed
-    local remaining_pids
-    remaining_pids=$(pgrep -f "sunshine" 2>/dev/null || true)
-    if [ -n "$remaining_pids" ]; then
-      log "Force-killing stubborn processes (PIDs: $remaining_pids)"
-      kill -9 $remaining_pids 2>/dev/null || true
-    fi
+  if [ -f "$PIDFILE" ]; then
+    kill "$(cat "$PIDFILE")" 2>/dev/null || true
+    rm -f "$PIDFILE"
   fi
-
-  # Also check flatpak ps and kill any remaining flatpak processes
-  local flatpak_pids
-  flatpak_pids="$(flatpak --system ps | awk '$2=="'"$APP_ID"'"{print $1}')"
-  if [ -n "${flatpak_pids:-}" ]; then
-    log "Force-killing remaining Flatpak PIDs: $flatpak_pids"
-    kill -9 $flatpak_pids 2>/dev/null || true
-  fi
-
-  # Final verification
-  sleep 1
-  local final_check
-  final_check=$(pgrep -f "sunshine" 2>/dev/null || true)
-  if [ -n "$final_check" ]; then
-    log "WARNING: Some Sunshine processes may still be running (PIDs: $final_check)"
-  else
-    log "All Sunshine processes stopped successfully"
-  fi
-
-  rm -f "$PIDFILE"
+  # Fallback: kill any leftover instance
+  pkill -f "flatpak --system run ${APP_ID}" 2>/dev/null || true
 }
 
 status_service(){
-  # Check for any sunshine processes via pgrep (most reliable method)
-  local pids
-  pids=$(pgrep -f "sunshine" 2>/dev/null || true)
-  
-  if [ -n "$pids" ]; then
-    echo "sunshine: running (PIDs: $pids)"
+  if pgrep -f "flatpak --system run ${APP_ID}" >/dev/null; then
+    echo "sunshine: running"
   else
     echo "sunshine: stopped"
   fi
@@ -171,23 +103,18 @@ status_service(){
 uninstall_service(){
   exec >>"$LOGFILE" 2>&1
   log "uninstall ${SERVICE_NAME}"
-
   stop_service
-  # Remove system (and user, just in case) Flatpak installs
+  # Remove system-scope app; also try user scope just in case
   flatpak --system uninstall -y --noninteractive "$APP_ID" >>"$LOGFILE" 2>&1 || true
-  flatpak --user   uninstall -y --noninteractive "$APP_ID" >>"$LOGFILE" 2>&1 || true
-
-  # Remove Sunshine’s Flatpak config to reset creds/settings
-  rm -rf /userdata/system/.var/app/dev.lizardbyte.app.Sunshine || true
-
-  echo "Sunshine removed (app + settings). You can delete this service file if desired."
+  flatpak --user uninstall -y --noninteractive "$APP_ID" >>"$LOGFILE" 2>&1 || true
+  echo "Sunshine Flatpak uninstalled. You may now remove this service file."
 }
 
 case "${1-}" in
-  start)    start_service ;;
-  stop)     stop_service ;;
-  restart)  stop_service; sleep 1; start_service ;;
-  status)   status_service ;;
+  start)   start_service ;;
+  stop)    stop_service ;;
+  restart) stop_service; sleep 1; start_service ;;
+  status)  status_service ;;
   uninstall) uninstall_service ;;
   *)
     echo "Usage: $0 {start|stop|restart|status|uninstall}"
