@@ -157,17 +157,11 @@ stop_service(){
 }
 
 status_service(){
-  local flatpak_running pgrep_running
+  # Check for any sunshine processes via pgrep (most reliable method)
+  local pids
+  pids=$(pgrep -f "sunshine" 2>/dev/null || true)
   
-  # Check flatpak processes
-  flatpak_running=$(flatpak --system ps | awk '{print $2}' | grep -qx "$APP_ID" && echo "yes" || echo "no")
-  
-  # Check for any sunshine processes via pgrep
-  pgrep_running=$(pgrep -f "sunshine" >/dev/null 2>&1 && echo "yes" || echo "no")
-  
-  if [ "$flatpak_running" = "yes" ] || [ "$pgrep_running" = "yes" ]; then
-    local pids
-    pids=$(pgrep -f "sunshine" 2>/dev/null || echo "unknown")
+  if [ -n "$pids" ]; then
     echo "sunshine: running (PIDs: $pids)"
   else
     echo "sunshine: stopped"
