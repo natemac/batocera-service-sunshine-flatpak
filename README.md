@@ -52,9 +52,10 @@ To stop and fully remove Sunshine **including its settings**:
 
 ```bash
 batocera-services stop sunshine
-rm -f /userdata/system/services/sunshine
 flatpak --system uninstall -y dev.lizardbyte.app.Sunshine
+flatpak --user uninstall -y dev.lizardbyte.app.Sunshine
 rm -rf /userdata/system/.var/app/dev.lizardbyte.app.Sunshine
+rm -f /userdata/system/services/sunshine
 ```
 
 On next start, Sunshine will behave like a fresh install and ask you to set a new username/password.
